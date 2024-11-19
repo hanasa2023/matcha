@@ -6,13 +6,13 @@ on:
       - main
   pull_request_target:
     paths:
-      - "src/**"
-      - "src-tauri/src/**"
-      - "tests/**"
-      - "package.json"
-      - "vite.config.ts"
-      - "src-tauri/Cargo.toml"
-      - "src-tauri/tauri.conf.json"
+      - 'src/**'
+      - 'src-tauri/src/**'
+      - 'tests/**'
+      - 'package.json'
+      - 'vite.config.ts'
+      - 'src-tauri/Cargo.toml'
+      - 'src-tauri/tauri.conf.json'
   workflow_dispatch:
 
 concurrency:
