@@ -2,8 +2,8 @@ name: 'publish android'
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - '*'
 
   workflow_dispatch:
 
@@ -29,7 +29,9 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install NDK
-        run: sdkmanager "ndk;27.0.11902837"
+        run: |
+          sdkmanager "ndk;27.0.11902837"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.0.11902837" >> $GITHUB_ENV
 
       - name: setup node
         uses: actions/setup-node@v4
@@ -41,27 +43,49 @@ jobs:
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
 
+      - name: Add NDK targets and tools to PATH
+        run: |
+          echo "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+
       - name: Install dependencies
         run: pnpm install
+
+      - name: Init android app
+        run: pnpm tauri android init
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.11902837
+
+      - name: Set Icon
+        run: pnpm tauri icon src-tauri/icons/icon.png
+
+      - name: setup Android signing
+        run: |
+          cd src-tauri/gen/android
+          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" > keystore.properties
+          echo "password=${{ secrets.ANDROID_KEY_PASSWORD }}" >> keystore.properties
+          base64 -d <<< "${{ secrets.ANDROID_KEY_BASE64 }}" > $RUNNER_TEMP/keystore.jks
+          echo "storeFile=$RUNNER_TEMP/keystore.jks" >> keystore.properties
+          sed -i '2i import java.io.FileInputStream' ./app/build.gradle.kts
+          cat > signing_config.txt << 'EOF'
+          val keystorePropertiesFile = rootProject.file("keystore.properties")
+          val keystoreProperties = Properties()
+          if (keystorePropertiesFile.exists()) {
+              keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+          }
+
+          keyAlias = keystoreProperties["keyAlias"] as String
+          keyPassword = keystoreProperties["password"] as String
+          storeFile = file(keystoreProperties["storeFile"] as String)
+          storePassword = keystoreProperties["password"] as String
+          EOF
+          sed -i '30r signing_config.txt' ./app/build.gradle.kts
+          sed -i '55i signingConfig = signingConfigs.getByName("release")' ./app/build.gradle.kts
+          rm signing_config.txt
 
       - name: Build app bundle
         run: pnpm tauri android build -v
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.11902837
-
-      - name: Extract android signing key from env
-        run: |
-          echo "${{ secrets.ANDROID_RELEASE_KEYSTORE }}" > src-tauri/gen/android/release.jks.base64
-          base64 -d src-tauri/gen/android/release.jks.base64 > src-tauri/gen/android/release.decrypted.jks
-
-      - name: Sign APK
-        run: |
-          ${{ env.ANDROID_HOME }}/build-tools/34.0.0/apksigner sign --ks src-tauri/gen/android/release.decrypted.jks \
-            --ks-key-alias ${{ secrets.ANDROID_RELEASE_KEY }} \
-            --ks-pass pass:${{ secrets.ANDROID_RELEASE_PASSWORD }} \
-            --key-pass pass:${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }} \
-            --out src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-signed.apk \
-            src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk
 
       - name: Get Node project version
         id: package-version
@@ -69,14 +93,17 @@ jobs:
 
       - name: Rename APK file
         run: |
-          mv ./src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-signed.apk ./src-tauri/gen/android/app/build/outputs/apk/universal/release/myappliation-${{ steps.package-version.outputs.current-version}}.apk
+          APK_VERSION=$(echo "${{ steps.package-version.outputs.current-version}}" | tr -d '\n')
+          mv ./src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk ./src-tauri/gen/android/app/build/outputs/apk/universal/release/matcha-${APK_VERSION}.apk
 
       - name: Publish
         uses: softprops/action-gh-release@v1
         with:
           draft: true
-          name: App v${{ steps.package-version.outputs.current-version}}
+          name: matcha v${{ steps.package-version.outputs.current-version}}
           tag_name: v${{ steps.package-version.outputs.current-version}}
           generate_release_notes: true
           files: |
-            ./src-tauri/gen/android/app/build/outputs/apk/universal/release/myapplication-${{ steps.package-version.outputs.current-version}}.apk
+            ./src-tauri/gen/android/app/build/outputs/apk/universal/release/matcha-${{ steps.package-version.outputs.current-version}}.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
